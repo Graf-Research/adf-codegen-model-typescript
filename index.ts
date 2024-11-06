@@ -107,12 +107,48 @@ export namespace TypescriptModel {
       });
   }
 
+  const transform_integer = `(param?: any): number | null => (param?.value === null || param?.value === undefined || param?.value === '') ? null : parseInt(param.value)`;
+  const transform_decimal = `(param?: any): number | null => (param?.value === null || param?.value === undefined || param?.value === '') ? null : parseFloat(param.value)`;
+  const transform_boolean = `(param?: any): boolean | null => (param?.value === null || param?.value === undefined || param?.value === '') ? null : (param?.value === 'true' || ((typeof param?.value === 'boolean') && param?.value))`;
+  const transform_date = `(param?: any): Date | null => (param?.value === null || param?.value === undefined || param?.value === '') ? null : new Date(param?.value)`;
+
   function buildColumnCommon(type: Model.CommonSQLType.Common, column: Model.TableColumn, list_model: Model.Item[]): string[] {
     const null_attr = (column.attributes ?? []).find((attr: Model.ColumnAttribute.Attributes) => attr.type === 'null');
     const is_required = null_attr ? !null_attr.value : false;
+    
+    const list_decorator: string[] = [];
+    switch (type.type) {
+      case "bigint":
+      case "tinyint":
+      case "smallint":
+      case "int":
+        list_decorator.push(`@Transform(${transform_integer})`);
+        list_decorator.push(`@IsNumber({}, { message: '${column.name} must be a number (integer)' })`);
+        break;
+      case "boolean":
+        list_decorator.push(`@Transform(${transform_boolean})`);
+        list_decorator.push(`@IsBoolean({ message: '${column.name} must be a boolean' })`);
+        break;
+      case "float":
+      case "real":
+      case "decimal":
+        list_decorator.push(`@Transform(${transform_decimal})`);
+        list_decorator.push(`@IsNumber({}, { message: '${column.name} must be a number (decimal)' })`);
+        break;
+      case "date":
+      case "timestamp":
+        list_decorator.push(`@Transform(${transform_date})`);
+        list_decorator.push(`@IsISO8601({}, { message: '${column.name} must be an ISO8601 date' })`);
+        break;
+      case "text":
+      case "varchar":
+        list_decorator.push(`@IsString({ message: '${column.name} must be a string' })`);
+        break;
+    }
 
     return [
-      `${column.name}${is_required ? '' : '?'}: ${sqlTypeToJSType(type)}`
+      ...list_decorator,
+      `${column.name}${is_required ? '!' : '?'}: ${sqlTypeToJSType(type)}`
     ];
   }
 
@@ -121,7 +157,9 @@ export namespace TypescriptModel {
     const is_required = null_attr ? !null_attr.value : false;
 
     return [
-      `${column.name}${is_required ? '' : '?'}: ${sqlTypeToJSType(type)}`
+      `@Transform(${transform_decimal})`,
+      `@IsNumber({}, { message: '${column.name} must be a number (decimal)' })`,
+      `${column.name}${is_required ? '!' : '?'}: ${sqlTypeToJSType(type)}`
     ];
   }
 
@@ -130,7 +168,8 @@ export namespace TypescriptModel {
     const is_required = null_attr ? !null_attr.value : false;
 
     return [
-      `${column.name}${is_required ? '' : '?'}: ${sqlTypeToJSType(type)}`
+      `@IsString({ message: '${column.name} must be a string' })`,
+      `${column.name}${is_required ? '!' : '?'}: ${sqlTypeToJSType(type)}`
     ];
   }
 
@@ -139,7 +178,8 @@ export namespace TypescriptModel {
     const is_required = null_attr ? !null_attr.value : false;
 
     return [
-      `${column.name}${is_required ? '' : '?'}: ${sqlTypeToJSType(type)}`
+      `@IsEnum(${type.enum_name}, { message: '${column.name} must be enum ${type.enum_name}' })`,
+      `${column.name}${is_required ? '!' : '?'}: ${sqlTypeToJSType(type)}`
     ];
   }
 
@@ -158,12 +198,12 @@ export namespace TypescriptModel {
     const one_to_many_field_name = `otm_${column.name}`;
     
     const typeorm_decorator = [
-      `${one_to_many_field_name}${is_required ? '' : '?'}: ${foreign_table.name};`,
+      `${one_to_many_field_name}${is_required ? '!' : '?'}: ${foreign_table.name};`,
     ]
 
     return [
       ...typeorm_decorator,
-      `${column.name}${is_required ? '' : '?'}: ${sqlTypeToJSType(foreign_column.type)}`
+      `${column.name}${is_required ? '!' : '?'}: ${sqlTypeToJSType(foreign_column.type)}`
     ];
   }
 
@@ -195,7 +235,9 @@ export namespace TypescriptModel {
 
   export function getTableContent(table: Model.Table, list_model: Model.Item[]): string[] {
     return [
-      `export interface ${table.name} {`,
+      `import { ClassConstructor, Transform, Type, plainToInstance } from "class-transformer";`,
+      `import { IsNotEmpty, IsNumber, IsObject, IsBoolean, IsOptional, IsISO8601, IsString, IsEnum, ValidateNested, IsArray, ValidationError, validateOrReject } from "class-validator";\n`,
+      `export class ${table.name} {`,
       ...table.columns
         .reduce((acc: string[], c: Model.TableColumn) => [...acc, ...buildColumn(c, table, list_model)], [])
         .map(line => '  ' + line),
